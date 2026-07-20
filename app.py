@@ -11,7 +11,7 @@ app = FastAPI()
 # ==========================
 
 # Customer API Key
-CUSTOMER_API_KEY = os.getenv("CUSTOMER_API_KEY", "customer123")
+CUSTOMER_API_KEY = os.getenv("CUSTOMER_API_KEY", "STEVE")
 
 # Optional Rate Limit (0 = Disabled)
 RATE_LIMIT_SECONDS = 0
