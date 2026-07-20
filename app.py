@@ -1,62 +1,109 @@
-from fastapi import FastAPI, Query, HTTPException, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 import httpx
 import time
+import os
 
 app = FastAPI()
 
-# ===== Simple In-Memory Rate Limit =====
+# ==========================
+# CONFIG
+# ==========================
+
+# Customer API Key
+CUSTOMER_API_KEY = os.getenv("CUSTOMER_API_KEY", "customer123")
+
+# Optional Rate Limit (0 = Disabled)
 RATE_LIMIT_SECONDS = 0
+
 ip_last_request = {}
+
+# ==========================
+# Rate Limit Middleware
+# ==========================
 
 @app.middleware("http")
 async def rate_limit(request: Request, call_next):
+    if RATE_LIMIT_SECONDS <= 0:
+        return await call_next(request)
+
     ip = request.client.host
     now = time.time()
 
-    last_time = ip_last_request.get(ip)
-    if last_time and (now - last_time) < RATE_LIMIT_SECONDS:
+    last = ip_last_request.get(ip)
+
+    if last and (now - last) < RATE_LIMIT_SECONDS:
         return JSONResponse(
             status_code=429,
-            content={"error": "Ruk ja bhencho itne m kya unlimited request lega?? Paid lena h to bolo 100-400₹ @sudocypherx."}
+            content={
+                "success": False,
+                "message": "Too many requests. Please wait."
+            }
         )
 
     ip_last_request[ip] = now
     return await call_next(request)
 
-# ===== API =====
+# ==========================
+# Main API
+# ==========================
+
 @app.get("/")
-async def lookup(
-    key: str = Query(None), 
-    number: str = Query(None)
+async def vehicle_lookup(
+    key: str = Query(None),
+    reg_number: str = Query(None)
 ):
-    # Fast Validation
-    if key != "lundkinger3":
-        return JSONResponse(status_code=403, content={"error": "Unauthorized: Invalid Key"})
 
-    if not number:
-        return JSONResponse(status_code=400, content={"error": "Number parameter is required"})
+    # API Key Validation
+    if key != CUSTOMER_API_KEY:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "success": False,
+                "message": "Invalid API Key"
+            }
+        )
 
-    target_url = f"https://api.subhxcosmo.in/api?key=SATYAM2&type=mobile&term={number}"
+    # Registration Number Validation
+    if not reg_number:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "success": False,
+                "message": "reg_number parameter is required"
+            }
+        )
 
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(target_url, timeout=10.0)
-            data = response.json()
+    target_url = (
+        "https://web.justpolicy.in/php-vahaan/service.php/"
+        f"?action=VAHAAN_DETAILS"
+        f"&reg_number={reg_number}"
+        "&type=rc"
+    )
 
-            # Fast Filtering
-            if data.get("success") and "result" in data:
-                res = data["result"]
-                return {
-                    "results": res.get("results", []),
-                    "search_time": res.get("search_time", ""),
-                    "status": res.get("status", "success")
-                }
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.get(target_url)
 
-            return JSONResponse(status_code=404, content={"error": "No data found"})
+        return JSONResponse(
+            status_code=response.status_code,
+            content=response.json()
+        )
 
-        except Exception as e:
-            return JSONResponse(
-                status_code=500,
-                content={"error": "Fast API error", "details": str(e)}
-            )
+    except httpx.TimeoutException:
+        return JSONResponse(
+            status_code=504,
+            content={
+                "success": False,
+                "message": "Upstream API timeout"
+            }
+        )
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "message": str(e)
+            }
+        )
