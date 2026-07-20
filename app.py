@@ -1,29 +1,29 @@
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 import httpx
-import time
 import os
+import time
 
 app = FastAPI()
 
-# ==========================
+# ===========================
 # CONFIG
-# ==========================
+# ===========================
 
-# Customer API Key
 CUSTOMER_API_KEY = os.getenv("CUSTOMER_API_KEY", "STEVE")
+ROOTX_API_KEY = os.getenv("ROOTX_API_KEY", "Premium_CypherX")
 
-# Optional Rate Limit (0 = Disabled)
 RATE_LIMIT_SECONDS = 0
 
 ip_last_request = {}
 
-# ==========================
-# Rate Limit Middleware
-# ==========================
+# ===========================
+# RATE LIMIT
+# ===========================
 
 @app.middleware("http")
 async def rate_limit(request: Request, call_next):
+
     if RATE_LIMIT_SECONDS <= 0:
         return await call_next(request)
 
@@ -37,24 +37,24 @@ async def rate_limit(request: Request, call_next):
             status_code=429,
             content={
                 "success": False,
-                "message": "Too many requests. Please wait."
+                "message": "Too many requests"
             }
         )
 
     ip_last_request[ip] = now
+
     return await call_next(request)
 
-# ==========================
-# Main API
-# ==========================
+# ==========================================================
+# VEHICLE DETAILS API
+# ==========================================================
 
 @app.get("/")
-async def vehicle_lookup(
+async def vehicle_details(
     key: str = Query(None),
     reg_number: str = Query(None)
 ):
 
-    # API Key Validation
     if key != CUSTOMER_API_KEY:
         return JSONResponse(
             status_code=403,
@@ -64,13 +64,12 @@ async def vehicle_lookup(
             }
         )
 
-    # Registration Number Validation
     if not reg_number:
         return JSONResponse(
             status_code=400,
             content={
                 "success": False,
-                "message": "reg_number parameter is required"
+                "message": "reg_number is required"
             }
         )
 
@@ -82,6 +81,7 @@ async def vehicle_lookup(
     )
 
     try:
+
         async with httpx.AsyncClient(timeout=20) as client:
             response = await client.get(target_url)
 
@@ -90,16 +90,91 @@ async def vehicle_lookup(
             content=response.json()
         )
 
-    except httpx.TimeoutException:
+    except Exception as e:
+
         return JSONResponse(
-            status_code=504,
+            status_code=500,
             content={
                 "success": False,
-                "message": "Upstream API timeout"
+                "message": str(e)
+            }
+        )
+
+# ==========================================================
+# VEHICLE -> MOBILE API
+# ==========================================================
+
+@app.get("/mobile")
+async def vehicle_mobile(
+    key: str = Query(None),
+    vehicle_number: str = Query(None)
+):
+
+    if key != CUSTOMER_API_KEY:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "success": False,
+                "message": "Invalid API Key"
+            }
+        )
+
+    if not vehicle_number:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "success": False,
+                "message": "vehicle_number is required"
+            }
+        )
+
+    target_url = (
+        "https://rootx-osint.in/"
+        f"?type=v_num"
+        f"&key={ROOTX_API_KEY}"
+        f"&query={vehicle_number}"
+    )
+
+    try:
+
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.get(target_url)
+
+        data = response.json()
+
+        # Response Format 1
+        if "data" in data:
+
+            return {
+                "success": data.get("success", True),
+                "vehicle_number": data["data"].get("vehicle_number"),
+                "mobile_number": data["data"].get("mobile_number"),
+                "cached": data.get("cached", False),
+                "response_time": data.get("response_time")
+            }
+
+        # Response Format 2
+        if "vehicle" in data:
+
+            return {
+                "success": data.get("success", True),
+                "vehicle_number": data.get("vehicle"),
+                "mobile_number": data.get("mobile"),
+                "cached": data.get("cached", False),
+                "response_time": data.get("response_time")
+            }
+
+        return JSONResponse(
+            status_code=404,
+            content={
+                "success": False,
+                "message": "No data found",
+                "response": data
             }
         )
 
     except Exception as e:
+
         return JSONResponse(
             status_code=500,
             content={
